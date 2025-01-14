@@ -101,11 +101,10 @@ def prepare_dataset():
         process_split('test', test_images, class_name, pca_model)
 
 prepare_dataset()
-
-
 print("Data preparation completed!")
-model = YOLO('yolo11x-cls.pt')
 
+
+model = YOLO('yolo11x-cls.pt')
 model.train(
     data='data/pretrained_data/',
     imgsz=64,
