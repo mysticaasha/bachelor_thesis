@@ -5,108 +5,117 @@ from sklearn.decomposition import PCA
 from sklearn.model_selection import train_test_split
 from tqdm import tqdm
 from PIL import Image
+from ultralytics import YOLO
 
+ORIGINAL_DATA_PATH = 'data/original_data'
+PRETRAINED_DATA_DIR = 'data/pretrained_data'
 
-DATASET_PATH = 'data/original_data'
-OUTPUT_DIR = 'data/pretrained_data'
+TRAIN_DIR = os.path.join(PRETRAINED_DATA_DIR, 'train')
+VAL_DIR = os.path.join(PRETRAINED_DATA_DIR, 'val')
+TEST_DIR = os.path.join(PRETRAINED_DATA_DIR, 'test')
 
-TRAIN_DIR = os.path.join(OUTPUT_DIR, 'train')
-VAL_DIR = os.path.join(OUTPUT_DIR, 'val')
-TEST_DIR = os.path.join(OUTPUT_DIR, 'test')
+classes = [
+    'AnnualCrop',
+    'Forest',
+    'HerbaceousVegetation',
+    'Highway',
+    'Industrial',
+    'Pasture',
+    'PermanentCrop',
+    'Residential',
+    'River',
+    'SeaLake'
+]
 
-for split in ['train', 'val', 'test']:
-    os.makedirs(os.path.join(OUTPUT_DIR, split), exist_ok=True)
+def create_directories():
+    global PRETRAINED_DATA_DIR
+    for split in ['train', 'val', 'test']:
+        os.makedirs(os.path.join(PRETRAINED_DATA_DIR, split), exist_ok=True)
+        for class_name in classes:
+            os.makedirs(os.path.join(PRETRAINED_DATA_DIR, split, class_name), exist_ok=True)
 
-class_mapping = {
-    'AnnualCrop': 0,
-    'Forest': 1,
-    'HerbaceousVegetation': 2,
-    'Highway': 3,
-    'Industrial': 4,
-    'Pasture': 5,
-    'PermanentCrop': 6,
-    'Residential': 7,
-    'River': 8,
-    'SeaLake': 9
-}
+def collect_training_data():
+    train_data = []
+    for class_name in classes:
+        image_paths = collect_class_data(class_name)
+        train_images, _, _ = split_data(image_paths)
+        for img_path in train_images:
+            with rasterio.open(img_path) as src:
+                img = src.read()
+            reshaped_img = img.reshape(13, -1).T
+            train_data.append(reshaped_img)
+    return np.vstack(train_data)
 
-def split_data(class_images):
-    train_images, test_images = train_test_split(class_images, test_size=0.3, random_state=42)
+def train_pca(train_data):
+    pca_model = PCA(n_components=3)
+    pca_model.fit(train_data)
+    return pca_model
+
+def collect_class_data(class_name):
+    class_dir = os.path.join(ORIGINAL_DATA_PATH, class_name)
+    images = [f for f in os.listdir(class_dir) if f.endswith('.tif')]
+    return [os.path.join(class_dir, img) for img in images]
+
+def split_data(image_paths):
+    train_images, test_images = train_test_split(image_paths, test_size=0.2, random_state=42)
     val_images, test_images = train_test_split(test_images, test_size=0.5, random_state=42)
     return train_images, val_images, test_images
 
-def apply_pca(image_path, pca_model=None):
+def apply_pca(image_path, pca_model):
     with rasterio.open(image_path) as src:
         img = src.read()
-    
-    reshaped_img = img.reshape(13, -1)
+    reduced_img = pca_model.transform(img.reshape(13, -1).T).T
+    return reduced_img.reshape(3, 64, 64)
 
-    if pca_model is None:
-        pca = PCA(n_components=3)
-        img_pca = pca.fit_transform(reshaped_img.T).T
-        return img_pca.reshape(3, 64, 64), pca
-    else:
-        img_pca = pca_model.transform(reshaped_img.T).T 
-        return img_pca.reshape(3, 64, 64)
+def normalize_image(img):
+    return (((img - img.min()) / (img.max() - img.min())) * 255).astype(np.uint8)
 
-def process_split(split, images, class_name, pca_model=None):
+def save_image(img, output_dir, img_path):
+    image_name = os.path.basename(img_path).replace('.tif', '.jpg')
+    image_data = Image.fromarray(img.T, 'RGB')
+    image_data.save(os.path.join(output_dir, image_name), format='JPEG')
+
+def process_split(split, images, class_name, pca_model):
     split_dir = {
         'train': TRAIN_DIR,
         'val': VAL_DIR,
         'test': TEST_DIR
     }[split]
-    
-    class_split_dir = os.path.join(split_dir, class_name)
-    os.makedirs(class_split_dir, exist_ok=True)
-
+    output_dir = os.path.join(split_dir, class_name)
     for img_path in tqdm(images, desc=f"Processing {class_name} - {split}"):
-        if split == 'train':
-            img_pca, pca_model = apply_pca(img_path)
-        else:
-            img_pca = apply_pca(img_path, pca_model)
-
-        
-        img_pca = (img_pca - img_pca.min()) / (img_pca.max() - img_pca.min())
-        img_pca = (img_pca * 255).astype(np.uint8)
-
-        image_name = os.path.basename(img_path).replace('.tif', '.jpg')
-        image_data = Image.fromarray(img_pca.T, 'RGB')
-        image_data.save(os.path.join(class_split_dir, image_name), format='JPEG')
-
-
-    return pca_model
+        img = apply_pca(img_path, pca_model)
+        img = normalize_image(img)
+        save_image(img, output_dir, img_path)
 
 def prepare_dataset():
-    pca_model = None
-    for class_name in class_mapping.keys():
-        class_dir = os.path.join(DATASET_PATH, class_name)
-        images = [f for f in os.listdir(class_dir) if f.endswith('.tif')]
-        image_paths = [os.path.join(class_dir, img) for img in images]
+    create_directories()
+    train_data = collect_training_data()
+    pca_model = train_pca(train_data)
 
-        train_images, val_images, test_images = split_data(image_paths)
+    for class_name in classes:
+        class_data = collect_class_data(class_name)
+        train_images, val_images, test_images = split_data(class_data)
 
-        pca_model = process_split('train', train_images, class_name, pca_model)
+        process_split('train', train_images, class_name, pca_model)
         process_split('val', val_images, class_name, pca_model)
         process_split('test', test_images, class_name, pca_model)
 
 prepare_dataset()
-print("data preparation completed!")
 
-from ultralytics import YOLO
 
-DATASET_DIR = 'data/pretrained_data/'
-
-model = YOLO('models/yolov8n-cls.pt')
+print("Data preparation completed!")
+model = YOLO('yolo11x-cls.pt')
 
 model.train(
-    data=DATASET_DIR,
+    data='data/pretrained_data/',
     imgsz=64,
     task='classify',
     epochs=100,
     batch=16,
     save=True,
-    device='cpu',
+    device='cuda:0',
 )
 
-trained_model = YOLO('runs/classify/train4/weights/best.pt')
-metrics = trained_model.val()
+
+model = YOLO('runs/classify/train/weights/best.pt')
+model.val(data='data/pretrained_data/')
