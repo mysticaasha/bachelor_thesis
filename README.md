@@ -47,7 +47,8 @@ The goal of this project is to classify land cover types from satellite images u
 
 ## Results
 - The trained YOLO model achieved significant accuracy on the EuroSAT dataset, demonstrating the effectiveness of deep learning for land cover classification in satellite imagery.
-- Detailed results and metrics can be found in the [Results](#results) section.
+<img width="700" height="90" alt="image" src="https://github.com/user-attachments/assets/9320acba-5786-442c-a1a7-354ac9da2d95" />
+<img width="700" height="500" alt="image" src="https://github.com/user-attachments/assets/464da0b7-a56f-4d27-80da-9f247f127f4e" />
 
 ## Requirements
 - Python 3.8+
